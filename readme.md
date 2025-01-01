@@ -57,9 +57,18 @@ npx prisma db push
 
 ### Running the Application
 
-Development mode:
+Development mode (runs both frontend and backend concurrently):
 ```bash
-npm run dev
+npm run dev:all
+```
+
+To run frontend and backend separately:
+```bash
+# Frontend only (Vite development server)
+npm run dev:frontend
+
+# Backend only (with Nodemon for auto-reload)
+npm run dev:backend
 ```
 
 Production mode:
@@ -67,6 +76,10 @@ Production mode:
 npm run build
 npm start
 ```
+
+The application will be available at:
+- Frontend: http://localhost:5173
+- Backend API: http://localhost:3000
 
 ## Database Management
 

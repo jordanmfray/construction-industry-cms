@@ -20,6 +20,62 @@ app.get('/api/companies', async (req, res) => {
   }
 });
 
+// New API endpoint to search for companies by location and type
+app.post('/api/companies/search', async (req, res) => {
+  try {
+    const { location, companyType } = req.body;
+    
+    if (!location || !companyType) {
+      return res.status(400).json({ 
+        error: 'Missing required fields',
+        message: 'Both location and companyType are required' 
+      });
+    }
+
+    const query = `${companyType} in ${location}`;
+    console.log(`Starting search for: ${query}`);
+    
+    const places = await getAllPlaces(encodeURIComponent(query));
+    console.log(`Found ${places.length} places for "${query}"`);
+
+    const companies = [];
+    for (const place of places) {
+      console.log('\nRaw place data:', JSON.stringify(place, null, 2));
+      
+      const placeId = place.place_id;
+      console.log('Place ID from search:', placeId);
+      
+      const fieldsString = detailsFields.join(',');
+      const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=${fieldsString}&key=${GOOGLE_MAPS_API_KEY}`;
+      
+      const detailsResponse = await axios.get(detailsUrl);
+      const placeDetails = detailsResponse.data.result;
+      
+      if (placeDetails) {
+        // Add place_id to placeDetails if it's missing
+        placeDetails.place_id = placeDetails.place_id || placeId;
+        
+        console.log('Place details:', JSON.stringify(placeDetails, null, 2));
+        const company = await findOrCreateCompanyFromPlace(placeDetails, companyType);
+        companies.push(company);
+      }
+    }
+
+    res.json({ 
+      success: true,
+      count: companies.length,
+      companies: companies 
+    });
+
+  } catch (error) {
+    console.error('Error searching companies:', error);
+    res.status(500).json({ 
+      error: 'Failed to search companies',
+      message: error.message 
+    });
+  }
+});
+
 // API endpoint to create a company
 app.post('/api/companies/create', async (req, res) => {
   try {
@@ -45,7 +101,10 @@ app.listen(port, () => {
 
 // Axios
 import axios from 'axios';
-const axiosInstance = axios.create({
+
+// Create a generic axios instance for other requests
+const axiosGeneric = axios.create();
+const axiosScraper = axios.create({
     transformResponse: [function (data) {
     try {
         // Parse HTML content
@@ -103,11 +162,15 @@ import { z } from "zod";
 const FIRECRAWL_API_KEY = process.env.FIRECRAWL_API_KEY;
 const firecrawl = new FirecrawlApp({apiKey: FIRECRAWL_API_KEY});
 
-const schema = z.object({
-    About: z.string(),
-    Tags: z.array(z.string()),
-    ShortDescription: z.string(),
-    RegionServed: z.string()
+const CompanySchema = z.object({
+    Name: z.string(),
+    WebsiteUrl: z.string(),
+    BusinessCity: z.string(),
+    BusinessState: z.string(),
+    BusinessZip: z.string(),
+    Description: z.string(),
+    Services: z.array(z.string()),
+    Tags: z.array(z.string())
 });
 
 console.log("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -");
@@ -201,14 +264,11 @@ async function findOrCreateCompanyByUrl(companyName, websiteUrl) {
     return company;
 }
 
-// This is the main function that kicks off the research for an org. 
-// It will find or create the org in the database, then scrape the GuideStar profile, and then scrape the org's website.
-
 //Scrape GuideStar nonprofit profile and save to database
 async function scrapeGuideStarProfileByEin(ein) {
     let GuideStarScrapeResult = await firecrawl.scrapeUrl(`https://www.guidestar.org/profile/${ein}`, {
         formats: ["extract"],
-        extract: { schema: GuideStarSchema }
+        extract: { schema: CompanySchema }
     });
     console.log("GuideStarScrapeResult: \n\n" + JSON.stringify(GuideStarScrapeResult.extract, null, 2));
     return GuideStarScrapeResult.extract;
@@ -319,9 +379,10 @@ async function scrapeWebpage(url, companyId) {
             console.log("Webpage already exists in database");
             return existingWebpage;
         }
-
+        
+        console.log("Scraping webpage: " + url);
         // Scrape the webpage
-        const response = await axiosInstance.get(url);
+        const response = await axiosScraper.get(url);
         const html = response.data;
         
         // Get unique URLs from the webpage
@@ -396,9 +457,140 @@ async function scrapeAndExtractUrls(url_to_scrape) {
     }
 }
 
-console.log("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -");
+// Google Places API - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 
-// const html = await scrapeContent("https://pastorserve.org/");
-// const testContent = await generateProfileFromWebsiteContent(html);
-// console.log("Test Content Type: " + typeof testContent);
-// console.log("Test Content: " + testContent);
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+
+// List of fields we want when retrieving place details
+const detailsFields = [
+  'name',
+  'formatted_address',
+  'formatted_phone_number',
+  'rating',
+  'website',
+  'reviews'
+];
+
+// Function to find or create company from Google Place data
+async function findOrCreateCompanyFromPlace(placeDetails, companyType) {
+    try {
+        console.log('\nChecking for existing company...');
+        console.log('Place ID:', placeDetails.place_id);
+        console.log('Place Name:', placeDetails.name);
+        console.log('Company Type:', companyType);
+        
+        // First try to find by Google Place ID
+        let company = await prisma.company.findFirst({
+            where: {
+                GooglePlaceId: placeDetails.place_id
+            }
+        });
+
+        if (company) {
+            console.log('Found company by Google Place ID:', company.Name);
+            // Update existing company with latest data
+            company = await prisma.company.update({
+                where: { Id: company.Id },
+                data: {
+                    Name: placeDetails.name,
+                    WebsiteUrl: placeDetails.website || company.WebsiteUrl,
+                    Rating: placeDetails.rating || company.Rating,
+                    Type: companyType // Update type even for existing companies
+                }
+            });
+            console.log('Updated existing company:', placeDetails.name);
+        }
+
+        // If not found by Google Place ID, try to find by website URL if available
+        if (!company && placeDetails.website) {
+            company = await prisma.company.findFirst({
+                where: {
+                    WebsiteUrl: placeDetails.website
+                }
+            });
+            if (company) {
+                console.log('Found company by Website URL:', company.Name);
+                // Update existing company with latest data
+                company = await prisma.company.update({
+                    where: { Id: company.Id },
+                    data: {
+                        Name: placeDetails.name,
+                        GooglePlaceId: placeDetails.place_id,
+                        Rating: placeDetails.rating || company.Rating,
+                        Type: companyType // Update type even for existing companies
+                    }
+                });
+                console.log('Updated existing company:', placeDetails.name);
+            }
+        }
+
+        if (!company) {
+            // Create new company if not found
+            console.log('Creating new company with data:');
+            console.log({
+                Name: placeDetails.name,
+                WebsiteUrl: placeDetails.website || null,
+                GooglePlaceId: placeDetails.place_id,
+                Type: companyType,
+                AddressStreet: placeDetails.formatted_address?.split(',')[0] || null,
+                AddressCity: placeDetails.formatted_address?.split(',')[1]?.trim() || null,
+                AddressState: placeDetails.formatted_address?.split(',')[2]?.trim()?.split(' ')[0] || null,
+                AddressZip: placeDetails.formatted_address?.split(',')[2]?.trim()?.split(' ')[1] || null,
+                Rating: placeDetails.rating || null,
+            });
+            
+            company = await prisma.company.create({
+                data: {
+                    Name: placeDetails.name,
+                    WebsiteUrl: placeDetails.website || null,
+                    GooglePlaceId: placeDetails.place_id,
+                    Type: companyType,
+                    AddressStreet: placeDetails.formatted_address?.split(',')[0] || null,
+                    AddressCity: placeDetails.formatted_address?.split(',')[1]?.trim() || null,
+                    AddressState: placeDetails.formatted_address?.split(',')[2]?.trim()?.split(' ')[0] || null,
+                    AddressZip: placeDetails.formatted_address?.split(',')[2]?.trim()?.split(' ')[1] || null,
+                    Rating: placeDetails.rating || null,
+                }
+            });
+            console.log('Created new company:', placeDetails.name);
+        }
+
+        return company;
+    } catch (error) {
+        console.error('Error in findOrCreateCompanyFromPlace:', error);
+        throw error;
+    }
+}
+async function getAllPlaces(query) {
+    let allPlaces = [];
+    let pageToken = '';
+    let delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    do {
+        // Construct URL with pagetoken if it exists
+        let url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&key=${GOOGLE_MAPS_API_KEY}`;
+        if (pageToken) {
+            url += `&pagetoken=${pageToken}`;
+        }
+
+        const response = await axios.get(url);
+        const data = response.data;
+
+        // Add results to our collection
+        if (data.results) {
+            allPlaces = allPlaces.concat(data.results);
+        }
+
+        // Get next page token
+        pageToken = data.next_page_token || '';
+
+        // If there's a next page, we need to wait a bit before making the next request
+        // Google requires a short delay before using a pagetoken
+        if (pageToken) {
+            await delay(2000); // Wait 2 seconds before next request
+        }
+
+    } while (pageToken); // Continue while there are more pages
+
+    return allPlaces;
+}

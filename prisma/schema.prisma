@@ -17,19 +17,21 @@ model Company {
   Id                Int     @id @default(autoincrement())
   Name              String
   WebsiteUrl        String? @unique
-  BusinessCity      String?
-  BusinessState     String?
-  BusinessZip       String?
+  GooglePlaceId     String? @unique
+  Type              String?
+  AddressStreet     String?
+  AddressCity       String?
+  AddressState      String?
+  AddressZip        String?
   Description       String?
+  Rating            Float?
   Services          Json?
-  Tags              Json?
   UrlsToScrape      Json?
   WebsiteContent    Json?
   WebsiteImages     Json?
   Webpages          Webpage[] @relation
   CreatedAt         DateTime  @default(now())
   UpdatedAt         DateTime  @updatedAt
-
 }
 
 model Webpage {

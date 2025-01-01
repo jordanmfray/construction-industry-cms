@@ -4,12 +4,12 @@ function App() {
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [formData, setFormData] = useState({
-    name: '',
-    websiteUrl: ''
+  const [searchData, setSearchData] = useState({
+    location: '',
+    companyType: ''
   });
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState(null);
 
   useEffect(() => {
     fetchCompanies();
@@ -30,66 +30,53 @@ function App() {
     }
   };
 
-  const handleSubmit = async (e) => {
+  const handleSearch = async (e) => {
     e.preventDefault();
-    setIsSubmitting(true);
-    setSubmitError(null);
+    setIsSearching(true);
+    setSearchError(null);
 
     try {
-      console.log('Sending data to server:', formData);
-
-      const response = await fetch('/api/companies/create', {
+      const response = await fetch('/api/companies/search', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          name: formData.name,
-          websiteUrl: formData.websiteUrl
-        }),
+        body: JSON.stringify(searchData),
       });
-
-      console.log('Response status:', response.status);
-      const contentType = response.headers.get('content-type');
-      console.log('Content-Type:', contentType);
 
       if (!response.ok) {
         const text = await response.text();
-        console.log('Error response text:', text);
-        
         let errorMessage;
         try {
           const errorData = JSON.parse(text);
-          errorMessage = errorData.error;
+          errorMessage = errorData.message || errorData.error;
         } catch (e) {
           errorMessage = text;
         }
-        
-        throw new Error(errorMessage || 'Failed to create company');
+        throw new Error(errorMessage || 'Search failed');
       }
 
       const data = await response.json();
-      console.log('Success response:', data);
+      console.log('Search results:', data);
 
-      // Reset form
-      setFormData({
-        name: '',
-        websiteUrl: ''
-      });
-
-      // Refresh companies list
-      await fetchCompanies();
+      if (data.success) {
+        // Update companies list with search results
+        setCompanies(data.companies);
+        setSearchError(null);
+      } else {
+        setSearchError(data.error || 'Search failed');
+      }
     } catch (err) {
-      console.error('Frontend error:', err);
-      setSubmitError(err.message);
+      console.error('Search error:', err);
+      setSearchError(err.message);
     } finally {
-      setIsSubmitting(false);
+      setIsSearching(false);
     }
   };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
+    setSearchData(prev => ({
       ...prev,
       [name]: value
     }));
@@ -101,31 +88,31 @@ function App() {
   return (
     <div className="container mx-auto p-4">
       <div className="mb-8 bg-white rounded-lg shadow-lg p-6">
-        <h2 className="text-2xl font-bold mb-4">Create New Company</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <h2 className="text-2xl font-bold mb-4">Search Companies</h2>
+        <form onSubmit={handleSearch} className="space-y-4">
           <div>
-            <label htmlFor="name" className="block text-sm font-medium text-gray-700">
-              Company Name
+            <label htmlFor="location" className="block text-sm font-medium text-gray-700">
+              Location (e.g., "Denver, CO")
             </label>
             <input
               type="text"
-              id="name"
-              name="name"
-              value={formData.name}
+              id="location"
+              name="location"
+              value={searchData.location}
               onChange={handleInputChange}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
               required
             />
           </div>
           <div>
-            <label htmlFor="websiteUrl" className="block text-sm font-medium text-gray-700">
-              Website URL
+            <label htmlFor="companyType" className="block text-sm font-medium text-gray-700">
+              Company Type (e.g., "plumbing")
             </label>
             <input
-              type="url"
-              id="websiteUrl"
-              name="websiteUrl"
-              value={formData.websiteUrl}
+              type="text"
+              id="companyType"
+              name="companyType"
+              value={searchData.companyType}
               onChange={handleInputChange}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
               required
@@ -133,15 +120,15 @@ function App() {
           </div>
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={isSearching}
             className={`w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
-              isSubmitting ? 'opacity-50 cursor-not-allowed' : ''
+              isSearching ? 'opacity-50 cursor-not-allowed' : ''
             }`}
           >
-            {isSubmitting ? 'Creating...' : 'Create Company'}
+            {isSearching ? 'Searching...' : 'Search Companies'}
           </button>
-          {submitError && (
-            <p className="mt-2 text-sm text-red-600">{submitError}</p>
+          {searchError && (
+            <p className="mt-2 text-sm text-red-600">{searchError}</p>
           )}
         </form>
       </div>
@@ -154,29 +141,33 @@ function App() {
               <h2 className="text-xl font-bold mb-2 text-gray-800">{company.Name}</h2>
               
               <div className="space-y-2 mb-4">
-                <p className="text-sm text-gray-600">
-                  <span className="font-semibold">ID:</span> {company.Id}
-                </p>
-                {company.BusinessCity && (
+                {company.AddressStreet && (
                   <p className="text-sm text-gray-600">
-                    <span className="font-semibold">City:</span> {company.BusinessCity}
+                    <span className="font-semibold">Address:</span> {company.AddressStreet}
                   </p>
                 )}
-                {company.BusinessState && (
+                {company.AddressCity && (
                   <p className="text-sm text-gray-600">
-                    <span className="font-semibold">State:</span> {company.BusinessState}
+                    <span className="font-semibold">City:</span> {company.AddressCity}
                   </p>
                 )}
-                {company.BusinessZip && (
+                {company.AddressState && (
                   <p className="text-sm text-gray-600">
-                    <span className="font-semibold">ZIP Code:</span> {company.BusinessZip}
+                    <span className="font-semibold">State:</span> {company.AddressState}
+                  </p>
+                )}
+                {company.AddressZip && (
+                  <p className="text-sm text-gray-600">
+                    <span className="font-semibold">ZIP:</span> {company.AddressZip}
+                  </p>
+                )}
+                {company.Rating && (
+                  <p className="text-sm text-gray-600">
+                    <span className="font-semibold">Rating:</span> {company.Rating}
                   </p>
                 )}
               </div>
               
-              {company.Description && (
-                <p className="text-gray-600 mb-4 text-sm italic">"{company.Description}"</p>
-              )}
               {company.WebsiteUrl && (
                 <a 
                   href={company.WebsiteUrl}
